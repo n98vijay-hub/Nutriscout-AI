@@ -555,66 +555,165 @@ function ScannerPage({ profile, addResult, setPage, setResult, user }: {
 // ─────────────────────────────────────────────
 // RESULTS PAGE
 // ─────────────────────────────────────────────
-function ResultsPage({ result, setPage }: { result: ScanResult|null; setPage: (p:Page)=>void }) {
-  if (!result) return <div className="page"><p>No scan yet. <button className="link-btn" onClick={() => setPage('scanner')}>Go scan something →</button></p></div>
-  const color = result.score >= 75 ? '#16a34a' : result.score >= 50 ? '#d97706' : '#dc2626'
-  const label = result.score >= 75 ? 'Good ✅' : result.score >= 50 ? 'Fair ⚠️' : 'Poor 🚨'
-  const bg = result.score >= 75 ? '#f0fdf4' : result.score >= 50 ? '#fffbeb' : '#fef2f2'
+function ResultsPage({result,setPage}:{result:ScanResult|null;setPage:(p:Page)=>void}) {
+  const [aiAnalysis,setAiAnalysis]=useState<{summary:string;topConcern:string;bestThing:string;verdict:string;verdictReason:string}|null>(null)
+  const [aiLoading,setAiLoading]=useState(false)
+
+  useEffect(()=>{
+    if(!result) return
+    const getAI=async()=>{
+      setAiLoading(true)
+      try {
+        const res=await fetch('/api/analyze',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            productName:result.productName,
+            ingredients:result.ingredients,
+            conditions:result.flaggedIngredients.map(f=>f.name),
+            allergies:[]
+          })
+        })
+        const data=await res.json()
+        if(data.analysis) setAiAnalysis(data.analysis)
+      } catch { /* silent fail */ }
+      setAiLoading(false)
+    }
+    getAI()
+  },[result])
+
+  if(!result) return <div className="page"><p>No scan yet. <button className="link-btn" onClick={()=>setPage('scanner')}>Scan something →</button></p></div>
+
+  const color=result.score>=75?'#16a34a':result.score>=50?'#d97706':'#dc2626'
+  const label=result.score>=75?'Good ✅':result.score>=50?'Fair ⚠️':'Poor 🚨'
+  const bg=result.score>=75?'#f0fdf4':result.score>=50?'#fffbeb':'#fef2f2'
+  const novaLabel=['','🌿 Unprocessed','🔄 Processed ingredient','⚠️ Processed food','🚨 Ultra-processed']
+  const verdictColor={'BUY':'#16a34a','AVOID':'#dc2626','LIMIT':'#d97706'}
 
   return (
     <div className="page">
-      <button className="back-btn" onClick={() => setPage('scanner')}>← Scan Another Product</button>
+      <button className="back-btn" onClick={()=>setPage('scanner')}>← Scan Another Product</button>
 
       <div className="result-header">
-        {result.imageUrl && <img src={result.imageUrl} alt={result.productName} className="product-img" onError={e => (e.currentTarget.style.display='none')} />}
+        {result.imageUrl&&<img src={result.imageUrl} alt={result.productName} className="product-img" onError={e=>(e.currentTarget.style.display='none')}/>}
         <div>
           <h1>{result.productName}</h1>
           <p className="brand">{result.brand}</p>
+          {result.quantity&&<p className="brand">Size: {result.quantity}</p>}
           <p className="timestamp">{result.timestamp}</p>
         </div>
       </div>
 
-      <div className="score-card" style={{background: bg}}>
-        <div className="score-circle" style={{borderColor: color}}>
+      <div className="score-card" style={{background:bg}}>
+        <div className="score-circle" style={{borderColor:color}}>
           <span className="score-num" style={{color}}>{result.score}</span>
           <span className="score-lbl" style={{color}}>/ 100</span>
         </div>
         <div className="score-info">
           <h3 style={{color}}>Health Score: {label}</h3>
-          <p>Personalized score based on your health profile. 100 = perfectly clean.</p>
-          <div className="score-track"><div className="score-fill" style={{width:`${result.score}%`, background: color}} /></div>
+          <p>Personalized to your conditions. 100 = perfectly clean.</p>
+          <div className="score-track"><div className="score-fill" style={{width:`${result.score}%`,background:color}}/></div>
+          <div className="badge-row">
+            {result.nutriScore&&<span className={`ns-badge ns-${result.nutriScore.toLowerCase()}`}>Nutri-Score {result.nutriScore}</span>}
+            {result.novaScore&&<span className="nova-badge">NOVA {result.novaScore} {novaLabel[result.novaScore]||''}</span>}
+          </div>
         </div>
       </div>
 
-      {result.flaggedIngredients.length > 0 ? (
+      {/* ── AI VERDICT BLOCK ── */}
+      <div className="ai-block">
+        <div className="ai-header">🤖 Claude AI Analysis</div>
+        {aiLoading?(
+          <div className="ai-loading">
+            <div className="ai-spinner"/>
+            <span>Claude is analyzing this product for your health profile...</span>
+          </div>
+        ):aiAnalysis?(
+          <div className="ai-body">
+            {aiAnalysis.verdict&&(
+              <div className="verdict-row">
+                <span className="verdict-label">Verdict:</span>
+                <span className="verdict-pill" style={{background:(verdictColor as any)[aiAnalysis.verdict]||'#888'}}>
+                  {aiAnalysis.verdict==='BUY'?'✅ BUY':aiAnalysis.verdict==='AVOID'?'🚨 AVOID':'⚠️ LIMIT'}
+                </span>
+                <span className="verdict-reason">{aiAnalysis.verdictReason}</span>
+              </div>
+            )}
+            {aiAnalysis.summary&&<p className="ai-summary">{aiAnalysis.summary}</p>}
+            <div className="ai-two-col">
+              {aiAnalysis.topConcern&&(
+                <div className="ai-concern">
+                  <div className="ai-col-label">⚠️ Top Concern</div>
+                  <div>{aiAnalysis.topConcern}</div>
+                </div>
+              )}
+              {aiAnalysis.bestThing&&(
+                <div className="ai-best">
+                  <div className="ai-col-label">✅ Best Thing</div>
+                  <div>{aiAnalysis.bestThing}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        ):(
+          <div className="ai-unavailable">AI analysis unavailable — showing standard analysis below.</div>
+        )}
+      </div>
+
+      {result.nutrients.length>0&&(
         <div className="section-block">
-          <h2>⚠️ {result.flaggedIngredients.length} Flagged Ingredient{result.flaggedIngredients.length > 1 ? 's' : ''}</h2>
-          {result.flaggedIngredients.map((f, i) => (
+          <h2>📊 Nutritional Breakdown <span className="per100">per 100g</span></h2>
+          <div className="nutrient-grid">
+            {result.nutrients.map((n,i)=>(
+              <div key={i} className="nutrient-card">
+                <div className="nutrient-name">{n.name}</div>
+                <div className={`nutrient-val level-${n.level}`}>{n.value}<span className="nutrient-unit">{n.unit}</span></div>
+                {n.level!=='ok'&&<div className={`nutrient-level level-${n.level}`}>{n.level==='high'?'HIGH':n.level==='medium'?'MED':'LOW'}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {result.flaggedIngredients.length>0?(
+        <div className="section-block">
+          <h2>⚠️ {result.flaggedIngredients.length} Harmful Ingredient{result.flaggedIngredients.length>1?'s':''} Found</h2>
+          {result.flaggedIngredients.map((f,i)=>(
             <div key={i} className={`flag-card flag-${f.severity}`}>
               <div className="flag-top"><span className="flag-name">{f.name}</span><span className={`flag-badge badge-${f.severity}`}>{f.severity} risk</span></div>
               <div className="flag-reason">{f.reason}</div>
             </div>
           ))}
         </div>
-      ) : (
-        <div className="clean-badge">✅ No harmful ingredients detected for your health profile!</div>
+      ):<div className="clean-badge">✅ No harmful ingredients detected for your health profile!</div>}
+
+      {result.additives.length>0&&(
+        <div className="section-block">
+          <h2>⚗️ Chemical Additives ({result.additives.length})</h2>
+          <div className="additives-list">
+            {result.additives.map((a,i)=>(
+              <div key={i} className="additive-row">
+                <span className="add-code">{a.split(':')[0]}</span>
+                <span className="add-desc">{a.split(':').slice(1).join(':').trim()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       <div className="section-block">
         <h2>💡 Healthier Alternatives</h2>
-        {result.swaps.map((s, i) => (
-          <div key={i} className="swap-card"><span className="swap-num">{i+1}</span>{s}</div>
-        ))}
+        {result.swaps.map((s,i)=><div key={i} className="swap-card"><span className="swap-num">{i+1}</span>{s}</div>)}
       </div>
 
       <div className="section-block">
-        <h2>📋 Full Ingredients</h2>
+        <h2>📋 Full Ingredients List</h2>
         <div className="ingredients-box">{result.ingredients}</div>
       </div>
 
       <div className="result-actions">
-        <button className="btn-primary large" onClick={() => setPage('scanner')}>Scan Another →</button>
-        <button className="btn-outline large" onClick={() => setPage('history')}>View History</button>
+        <button className="btn-primary large" onClick={()=>setPage('scanner')}>Scan Another →</button>
+        <button className="btn-outline large" onClick={()=>setPage('history')}>View History</button>
       </div>
     </div>
   )
